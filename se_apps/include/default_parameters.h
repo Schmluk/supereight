@@ -15,6 +15,7 @@
 #include <vector>
 #include <sstream>
 #include <getopt.h>
+#include <sys/stat.h>
 
 #include <se/constant_parameters.h>
 #include <se/config.h>

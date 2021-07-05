@@ -42,6 +42,15 @@ function(add_version appname libraries)# includes)
   target_include_directories(${appname}-benchmark PUBLIC
       include)
 
+  #  ------ PanMap Evaluations --------
+  add_executable(${appname}-paneval
+      src/panmap_comparison.cpp)
+  target_link_libraries(${appname}-paneval
+      ${appname}
+      ${main_common_libraries})
+  target_include_directories(${appname}-paneval PUBLIC
+      include)
+
   #  ------ MAIN --------
    if (GLUT_FOUND)
      add_executable(${appname}-main

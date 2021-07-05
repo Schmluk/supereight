@@ -28,10 +28,15 @@
 
 typedef unsigned short int ushort;
 
-// static const float SceneK[3][3] = { 481.20, 0.00, 319.50, 0.00, -480.00,
-// 239.50, 		0.00, 0.00, 1.00 };
-static const float SceneK[3][3] = {320.0,  0.00, 320.0, 0.00, 320.00,
-                                   240.00, 0.00, 0.00,  1.00}; // Flat Dataset
+#define USE_FLAT_DATA // Which dataset to process.
+
+#ifdef USE_FLAT_DATA
+float SceneK[3][3] = {320.0,  0.00, 320.0, 0.00, 320.00,
+                      240.00, 0.00, 0.00,  1.00};
+#else
+float SceneK[3][3] = {481.20, 0.00, 319.50, 0.00, -480.00,
+                      239.50, 0.00, 0.00,   1.00};
+#endif // USE_FLAT_DATA
 
 static const int _scenewidth = 640;
 static const int _sceneheight = 480;
@@ -108,50 +113,40 @@ int readDepthFile(ushort *depthMap, const char *filename) {
     }
   }
   free(scene_depth_float_buffer);
-  // std::cout << "End of file reading (" << index <<  ")." << std::endl;
   return index;
 }
 
 int readDepthTiff(ushort *depthMap, const char *filename) {
-  double *scene_depth_float_buffer =
-      (double *)malloc(sizeof(double) * _scenewidth * _sceneheight);
-
   TIFF *tif = TIFFOpen(filename, "r");
   if (tif) {
-    uint32_t imagelength;
-    tdata_t buf;
-    uint32_t row;
+    uint32 width, height;
+    tsize_t scanlength;
 
-    TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &imagelength);
-    buf = _TIFFmalloc(TIFFScanlineSize(tif));
-    for (row = 0; row < imagelength; row++) {
-      TIFFReadScanline(tif, buf, row, 0);
-			for (int col = 0; col < _scenewidth; ++col) {
-				scene_depth_float_buffer[row * _scenewidth + col] = reinterpret_cast<float*>(buf)[col];			}
-		}
+    // Read dimensions of image
+    if (TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &width) != 1) {
+      std::cerr << "Failed to read width" << std::endl;
+      return -1;
+    }
+    if (TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &height) != 1) {
+      std::cerr << "Failed to read height" << std::endl;
+      return -1;
+    }
 
-    _TIFFfree(buf);
+    scanlength = TIFFScanlineSize(tif);
+
+    // Read image data allocating space for each line as we get it
+    for (uint32 y = 0; y < height; y++) {
+      float *line = (float *)malloc(scanlength);
+      TIFFReadScanline(tif, line, y);
+      for (uint32 x = 0; x < width; x++) {
+        depthMap[x + y * _scenewidth] = static_cast<double>(line[x]) * 1000.0;
+      }
+    }
     TIFFClose(tif);
   } else {
     std::cerr << "Can't open Data from " << filename << " !\n";
     return -1;
   }
-
-  for (int v = 0; v < _sceneheight; v++) {
-  	for (int u = 0; u < _scenewidth; u++) {
-  		double u_u0_by_fx = (u - _u0) / _focal_x;
-  		double v_v0_by_fy = (v - _v0) / _focal_y;
-
-  		depthMap[u + v * _scenewidth] = scene_depth_float_buffer[u
-  				+ v * _scenewidth]
-  				/ std::sqrt(
-  						u_u0_by_fx * u_u0_by_fx + v_v0_by_fy
-  * v_v0_by_fy
-  								+ 1);
-
-  	}
-  }
-  free(scene_depth_float_buffer);
   return 0;
 }
 
@@ -191,7 +186,12 @@ int main(int argc, char **argv) {
     std::ostringstream filename;
     std::ostringstream rgbfilename;
 
-    if (false) {
+    bool use_flat_data = false;
+#ifdef USE_FLAT_DATA
+    use_flat_data = true;
+#endif // USE_FLAT_DATA
+
+    if (!use_flat_data) {
       // Default.
       filename << dir << "/scene_00_" << std::setfill('0') << std::setw(4) << i
                << ".depth";

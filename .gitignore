@@ -38,3 +38,7 @@ doc
 #VSCode
 .vscode/
 
+#Data
+living_room_traj2_loop/
+benchmark.log
+

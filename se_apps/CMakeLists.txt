@@ -4,6 +4,10 @@ project(se-apps)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${PROJECT_SOURCE_DIR}/cmake)
 
+find_package(PCL 1.3 REQUIRED COMPONENTS common io)
+include_directories(${PCL_INCLUDE_DIRS})
+link_directories(${PCL_LIBRARY_DIRS})
+
 if(APPLE)
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D__APPLE__")
 endif(APPLE)
@@ -47,9 +51,14 @@ function(add_version appname libraries)# includes)
       src/panmap_comparison.cpp)
   target_link_libraries(${appname}-paneval
       ${appname}
-      ${main_common_libraries})
+      ${main_common_libraries}
+      ${PCL_LIBRARIES}
+      ${GLUT_LIBRARIES}
+      ${OPENGL_LIBRARIES}
+      GL)
+
   target_include_directories(${appname}-paneval PUBLIC
-      include)
+      include ${PCL_LIBRARIES})
 
   #  ------ MAIN --------
    if (GLUT_FOUND)

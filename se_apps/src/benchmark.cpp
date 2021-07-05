@@ -185,8 +185,10 @@ int main(int argc, char ** argv) {
   if (config.dump_volume_file != "") {
     auto s = std::chrono::steady_clock::now();
     pipeline.dump_volume(config.dump_volume_file);
+		pipeline.dump_mesh(config.dump_volume_file + "/mesh.vtk");
     auto e = std::chrono::steady_clock::now();
     std::cout << "Mesh generated in " << (e - s).count() << " seconds" << std::endl;
+	
   }
 
 	//  =========  FREE BASIC BUFFERS  =========

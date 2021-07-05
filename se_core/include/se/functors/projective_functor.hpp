@@ -46,10 +46,14 @@ namespace functor {
 
     public:
       EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-      projective_functor(MapT<FieldType>& map, UpdateF f, const Sophus::SE3f& Tcw, 
-          const Eigen::Matrix4f& K, const Eigen::Vector2i framesize) : 
-        _map(map), _function(f), _Tcw(Tcw), _K(K), _frame_size(framesize) {
-      } 
+      projective_functor(MapT<FieldType>& map, 
+                         UpdateF f, 
+                         const Sophus::SE3f& Tcw, 
+                         const Eigen::Matrix4f& K, 
+                         const Eigen::Vector3f& offset, 
+                         const Eigen::Vector2i framesize) : 
+        _map(map), _function(f), _Tcw(Tcw), _K(K), _offset(offset), 
+        _frame_size(framesize) {} 
 
       void build_active_list() {
         using namespace std::placeholders;
@@ -58,20 +62,21 @@ namespace functor {
           _map.getBlockBuffer();
 
         /* Predicates definition */
+        const Eigen::Matrix4f Tcw = _Tcw.matrix();
         const float voxel_size = _map.dim()/_map.size();
         auto in_frustum_predicate = 
           std::bind(algorithms::in_frustum<se::VoxelBlock<FieldType>>, _1, 
-              voxel_size, _K*_Tcw.matrix(), _frame_size); 
+              voxel_size, _K*Tcw, _frame_size); 
         auto is_active_predicate = [](const se::VoxelBlock<FieldType>* b) {
           return b->active();
         };
 
-        algorithms::filter(_active_list, block_array, is_active_predicate,
+        algorithms::filter(_active_list, block_array, is_active_predicate, 
             in_frustum_predicate);
       }
 
-      void update_block(se::VoxelBlock<FieldType> * block, const float voxel_size) {
-
+      void update_block(se::VoxelBlock<FieldType> * block, 
+                        const float voxel_size) {
         const Eigen::Vector3i blockCoord = block->coordinates();
         const Eigen::Vector3f delta = _Tcw.rotationMatrix() * Eigen::Vector3f(voxel_size, 0, 0);
         const Eigen::Vector3f cameraDelta = _K.topLeftCorner<3,3>() * delta;
@@ -81,12 +86,12 @@ namespace functor {
         blockSide = se::VoxelBlock<FieldType>::side;
         unsigned int ylast = blockCoord(1) + blockSide;
         unsigned int zlast = blockCoord(2) + blockSide;
+        block->current_scale(0);
 
         for(z = blockCoord(2); z < zlast; ++z)
           for (y = blockCoord(1); y < ylast; ++y){
             Eigen::Vector3i pix = Eigen::Vector3i(blockCoord(0), y, z);
-            Eigen::Vector3f start = _Tcw * Eigen::Vector3f((pix(0)) * voxel_size, 
-                (pix(1)) * voxel_size, (pix(2)) * voxel_size);
+            Eigen::Vector3f start = _Tcw * (voxel_size * (pix.cast<float>() + _offset));
             Eigen::Vector3f camerastart = _K.topLeftCorner<3,3>() * start;
 #pragma omp simd
             for (unsigned int x = 0; x < blockSide; ++x){
@@ -112,9 +117,11 @@ namespace functor {
 
       void update_node(se::Node<FieldType> * node, const float voxel_size) { 
         const Eigen::Vector3i voxel = Eigen::Vector3i(unpack_morton(node->code_));
-        const Eigen::Vector3f delta = _Tcw.rotationMatrix() * Eigen::Vector3f::Constant(0.5f * voxel_size * node->side_);
+        const Eigen::Vector3f delta = _Tcw.rotationMatrix() * 
+          Eigen::Vector3f::Constant(0.5f * voxel_size * node->side_);
         const Eigen::Vector3f delta_c = _K.topLeftCorner<3,3>() * delta;
-        Eigen::Vector3f base_cam = _Tcw * (voxel_size * voxel.cast<float> ());
+        Eigen::Vector3f base_cam = _Tcw * 
+          (voxel_size * (voxel.cast<float> () + _offset*node->side_));
         Eigen::Vector3f basepix_hom = _K.topLeftCorner<3,3>() * base_cam;
 
 #pragma omp simd
@@ -160,9 +167,21 @@ namespace functor {
       UpdateF _function; 
       Sophus::SE3f _Tcw;
       Eigen::Matrix4f _K;
+      Eigen::Vector3f _offset;
       Eigen::Vector2i _frame_size;
       std::vector<se::VoxelBlock<FieldType>*> _active_list;
   };
+
+  template <typename FieldType, template <typename FieldT> class MapT, 
+            typename UpdateF>
+  void projective_map(MapT<FieldType>& map, const Eigen::Vector3f& offset, 
+      const Sophus::SE3f& Tcw, const Eigen::Matrix4f& K, 
+      const Eigen::Vector2i framesize, UpdateF funct) {
+
+    projective_functor<FieldType, MapT, UpdateF> 
+      it(map, funct, Tcw, K, offset, framesize);
+    it.apply();
+  }
 
   template <typename FieldType, template <typename FieldT> class MapT, 
             typename UpdateF>
@@ -171,7 +190,7 @@ namespace functor {
           UpdateF funct) {
 
     projective_functor<FieldType, MapT, UpdateF> 
-      it(map, funct, Tcw, K, framesize);
+      it(map, funct, Tcw, K, Eigen::Vector3f::Constant(0.f), framesize);
     it.apply();
   }
 }

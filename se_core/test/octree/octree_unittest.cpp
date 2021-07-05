@@ -31,7 +31,19 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "utils/math_utils.h"
 #include "gtest/gtest.h"
 #include "octant_ops.hpp"
+#include <octree.hpp>
 #include <bitset>
+#include <io/ply_io.hpp>
+#include <algorithms/balancing.hpp>
+
+typedef float testT;
+
+template <>
+struct voxel_traits<testT> {
+  typedef float value_type;
+  static inline value_type empty(){ return 0.f; }
+  static inline value_type initValue(){ return 1.f; }
+};
 
 TEST(Octree, OctantFaceNeighbours) {
   const Eigen::Vector3i octant = {112, 80, 160};
@@ -44,7 +56,7 @@ TEST(Octree, OctantFaceNeighbours) {
     {0, 0, -1}, {0, 0, 1}};
   for(int i = 0; i < 6; ++i) {
     const Eigen::Vector3i neighbour = octant + side * faces[i];
-    const Eigen::Vector3i computed = face_neighbour(code, i, leaves_depth, max_depth); 
+    const Eigen::Vector3i computed = se::face_neighbour(code, i, leaves_depth, max_depth); 
     ASSERT_EQ(neighbour(0), computed(0)); 
     ASSERT_EQ(neighbour(1), computed(1)); 
     ASSERT_EQ(neighbour(2), computed(2)); 
@@ -58,10 +70,10 @@ TEST(Octree, OctantDescendant) {
     se::keyops::encode(octant(0), octant(1), octant(2), 5, max_depth);
   se::key_t ancestor = 
     se::keyops::encode(96, 64, 128, 3, max_depth);
-  ASSERT_EQ(true , descendant(code, ancestor, max_depth)); 
+  ASSERT_EQ(true , se::descendant(code, ancestor, max_depth)); 
 
   ancestor = se::keyops::encode(128, 64, 64, 3, max_depth);
-  ASSERT_FALSE(descendant(code, ancestor, max_depth)); 
+  ASSERT_FALSE(se::descendant(code, ancestor, max_depth)); 
 }
 
 TEST(Octree, OctantParent) {
@@ -69,17 +81,17 @@ TEST(Octree, OctantParent) {
   Eigen::Vector3i octant = {112, 80, 160};
   se::key_t code = 
     se::keyops::encode(octant(0), octant(1), octant(2), 5, max_depth);
-  se::key_t p = parent(code, max_depth);
+  se::key_t p = se::parent(code, max_depth);
   ASSERT_EQ(se::keyops::code(code), se::keyops::code(p));
   ASSERT_EQ(4, p & SCALE_MASK);
 
   code = p;
-  p = parent(code, max_depth); 
+  p = se::parent(code, max_depth); 
   ASSERT_EQ(3, se::keyops::level(p));
   ASSERT_EQ(p, se::keyops::encode(96, 64, 160, 3, max_depth));
 
   code = p;
-  p = parent(code, max_depth); 
+  p = se::parent(code, max_depth); 
   ASSERT_EQ(2, se::keyops::level(p));
   ASSERT_EQ(p, se::keyops::encode(64, 64, 128, 2, max_depth));
 }
@@ -99,56 +111,56 @@ TEST(Octree, FarCorner) {
   /* First child */
   const se::key_t cell0 = 
     se::keyops::encode(16, 16, 16, level, max_depth);
-  const Eigen::Vector3i fc0 = far_corner(cell0, level, max_depth);
+  const Eigen::Vector3i fc0 = se::far_corner(cell0, level, max_depth);
   ASSERT_EQ(fc0(0), 16);
   ASSERT_EQ(fc0(1), 16);
   ASSERT_EQ(fc0(2), 16);
 
   /* Second child */
   const se::key_t cell1 = se::keyops::encode(24, 16, 16, level, max_depth);
-  const Eigen::Vector3i fc1 = far_corner(cell1, level, max_depth);
+  const Eigen::Vector3i fc1 = se::far_corner(cell1, level, max_depth);
   ASSERT_EQ(fc1(0), 32);
   ASSERT_EQ(fc1(1), 16);
   ASSERT_EQ(fc1(2), 16);
 
   /* Third child */
   const se::key_t cell2 = se::keyops::encode(16, 24, 16, level, max_depth);
-  const Eigen::Vector3i fc2 = far_corner(cell2, level, max_depth);
+  const Eigen::Vector3i fc2 = se::far_corner(cell2, level, max_depth);
   ASSERT_EQ(fc2(0), 16);
   ASSERT_EQ(fc2(1), 32);
   ASSERT_EQ(fc2(2), 16);
 
   /* Fourth child */
   const se::key_t cell3 = se::keyops::encode(24, 24, 16, level, max_depth);
-  const Eigen::Vector3i fc3 = far_corner(cell3, level, max_depth);
+  const Eigen::Vector3i fc3 = se::far_corner(cell3, level, max_depth);
   ASSERT_EQ(fc3(0), 32);
   ASSERT_EQ(fc3(1), 32);
   ASSERT_EQ(fc3(2), 16);
 
   /* Fifth child */
   const se::key_t cell4 = se::keyops::encode(24, 24, 16, level, max_depth);
-  const Eigen::Vector3i fc4 = far_corner(cell4, level, max_depth);
+  const Eigen::Vector3i fc4 = se::far_corner(cell4, level, max_depth);
   ASSERT_EQ(fc4(0), 32);
   ASSERT_EQ(fc4(1), 32);
   ASSERT_EQ(fc4(2), 16);
 
   /* sixth child */
   const se::key_t cell5 = se::keyops::encode(16, 16, 24, level, max_depth);
-  const Eigen::Vector3i fc5 = far_corner(cell5, level, max_depth);
+  const Eigen::Vector3i fc5 = se::far_corner(cell5, level, max_depth);
   ASSERT_EQ(fc5(0), 16);
   ASSERT_EQ(fc5(1), 16);
   ASSERT_EQ(fc5(2), 32);
 
   /* seventh child */
   const se::key_t cell6 = se::keyops::encode(24, 16, 24, level, max_depth);
-  const Eigen::Vector3i fc6 = far_corner(cell6, level, max_depth);
+  const Eigen::Vector3i fc6 = se::far_corner(cell6, level, max_depth);
   ASSERT_EQ(fc6(0), 32);
   ASSERT_EQ(fc6(1), 16);
   ASSERT_EQ(fc6(2), 32);
 
   /* eight child */
   const se::key_t cell7 = se::keyops::encode(24, 24, 24, level, max_depth);
-  const Eigen::Vector3i fc7 = far_corner(cell7, level, max_depth);
+  const Eigen::Vector3i fc7 = se::far_corner(cell7, level, max_depth);
   ASSERT_EQ(fc7(0), 32);
   ASSERT_EQ(fc7(1), 32);
   ASSERT_EQ(fc7(2), 32);
@@ -160,8 +172,8 @@ TEST(Octree, InnerOctantExteriorNeighbours) {
   const int side = 1 << (max_depth - level);
   const se::key_t cell = se::keyops::encode(16, 16, 16, level, max_depth);
   se::key_t N[7];
-  exterior_neighbours(N, cell, level, max_depth);
-  const se::key_t p = parent(cell, max_depth);
+  se::exterior_neighbours(N, cell, level, max_depth);
+  const se::key_t p = se::parent(cell, max_depth);
   
   const se::key_t neighbours_gt[7] = 
     {se::keyops::encode(15, 16, 16, level, max_depth),
@@ -177,7 +189,7 @@ TEST(Octree, InnerOctantExteriorNeighbours) {
     // std::cout << a << std::endl;
     // std::cout << c << std::endl << std::endl;
     ASSERT_EQ(neighbours_gt[i], N[i]);
-    ASSERT_FALSE(parent(N[i], max_depth) == p);
+    ASSERT_FALSE(se::parent(N[i], max_depth) == p);
     // std::cout << (unpack_morton(N[i] & ~SCALE_MASK)) << std::endl;
   }
 }
@@ -188,8 +200,8 @@ TEST(Octree, EdgeOctantExteriorNeighbours) {
   const int level = 2;
   const se::key_t cell = se::keyops::encode(0, 16, 16, level, max_depth);
   se::key_t N[7];
-  exterior_neighbours(N, cell, level, max_depth);
-  const se::key_t p = parent(cell, max_depth);
+  se::exterior_neighbours(N, cell, level, max_depth);
+  const se::key_t p = se::parent(cell, max_depth);
   
   for(int i = 0; i < 7; ++i) {
     const Eigen::Vector3i corner = unpack_morton(N[i] & ~SCALE_MASK);
@@ -205,13 +217,53 @@ TEST(Octree, OctantSiblings) {
   const int level = 2;
   const se::key_t cell = se::keyops::encode(16, 16, 16, level, max_depth);
   se::key_t s[8];
-  siblings(s, cell, max_depth);
+  se::siblings(s, cell, max_depth);
 
-  const int childidx = child_id(cell, level, max_depth);
+  const int childidx = se::child_id(cell, level, max_depth);
   ASSERT_EQ(s[childidx], cell);
-  
+  const Eigen::Vector3i p = se::keyops::decode(cell); 
   for(int i = 0; i < 8; ++i) {
     // std::cout << (unpack_morton(s[i] & ~SCALE_MASK)) << std::endl;
-    ASSERT_TRUE(parent(s[i], max_depth) == parent(cell, max_depth));
+    const Eigen::Vector3i po = se::keyops::decode(se::parent(s[i], max_depth));
+    ASSERT_TRUE(se::parent(s[i], max_depth) == se::parent(cell, max_depth));
+    ASSERT_TRUE(p.x() == po.x() && p.y() == po.y() && p.z() == po.z());
   }
+}
+
+TEST(Octree, OctantOneNeighbours) {
+  const int max_depth = 8;
+  const int level = 5;
+  const unsigned size = std::pow(2, max_depth);
+  Eigen::Matrix<int, 4, 6> N;
+  Eigen::Vector3i pos;
+  
+  // Inside cube
+  //
+  pos << 127, 56, 3;
+  se::one_neighbourhood(N, se::keyops::encode(pos.x(), pos.y(), pos.z(), 
+        level, max_depth), max_depth);
+  ASSERT_TRUE((N.array() >= 0).all() && (N.array() < size).all());
+
+  
+  // At edge cube
+  //
+  pos << size-1, 56, 3;
+  se::one_neighbourhood(N, se::keyops::encode(pos.x(), pos.y(), pos.z(), 
+        level, max_depth), max_depth);
+  ASSERT_TRUE((N.array() >= 0).all() && (N.array() < size).all());
+}
+
+TEST(Octree, BalanceTree) {
+  const int max_depth = 8;
+  const int level = 5;
+
+  se::Octree<testT> oct;
+  oct.init(1 << max_depth, 5);
+  Eigen::Vector3i vox(32, 208, 44);
+  oct.insert(vox.x(), vox.y(), vox.z());
+  vox += Eigen::Vector3i(50, 12, 100);
+  oct.insert(vox.x(), vox.y(), vox.z());
+  se::print_octree("./oct.ply", oct);
+  se::balance(oct);
+  se::print_octree("./oct-balanced.ply", oct);
 }

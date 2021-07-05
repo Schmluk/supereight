@@ -1,5 +1,5 @@
 /*
- Copyright 2016 Emanuele Vespa, Imperial College London 
+ Copyright 2016 Emanuele Vespa, Imperial College London
 
  Redistribution and use in source and binary forms, with or without
  modification, are permitted provided that the following conditions are met:
@@ -24,7 +24,7 @@
  SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
  CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
  OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #ifndef VOLUME_TEMPLATE_H
 #define VOLUME_TEMPLATE_H
@@ -43,10 +43,10 @@ class Void {};
 
 /**
  * Continuous volume abstraction
- * Sparse, dynamically allocated storage accessed through the 
+ * Sparse, dynamically allocated storage accessed through the
  * appropriate indexer (octree/hash table).
- * */ 
-template <typename FieldType, template<typename> class DiscreteMapT> 
+ * */
+template <typename FieldType, template<typename> class DiscreteMapT>
 class VolumeTemplate {
 
   public:
@@ -58,58 +58,93 @@ class VolumeTemplate {
     VolumeTemplate(unsigned int s, float d, DiscreteMapT<FieldType>* m) :
       _map_index(m) {
         _size = s;
-        _dim = d;
+        _extent = d;
       };
 
-    inline Eigen::Vector3f pos(const Eigen::Vector3i & p) const {
-      static const float voxelSize = _dim/_size;
+    inline Eigen::Vector3f pos(const Eigen::Vector3i& p) const {
+      static const float voxelSize = _extent/_size;
       return p.cast<float>() * voxelSize;
     }
 
     void set(const  Eigen::Vector3f& , const value_type& ) {}
 
     value_type operator[](const Eigen::Vector3f& p) const {
-      const float inverseVoxelSize = _size/_dim;
+      const float inverseVoxelSize = _size/_extent;
       const Eigen::Vector3i scaled_pos = (p * inverseVoxelSize).cast<int>();
       return _map_index->get(scaled_pos.x(), scaled_pos.y(), scaled_pos.z());
     }
 
-    value_type get(const Eigen::Vector3f & p) const {
-      const float inverseVoxelSize = _size/_dim;
+    value_type get(const Eigen::Vector3f& p, const int scale = 0) const {
+      const float inverseVoxelSize = _size/_extent;
       const Eigen::Vector4i scaled_pos = (inverseVoxelSize * p.homogeneous()).cast<int>();
         return _map_index->get_fine(scaled_pos.x(), 
                                     scaled_pos.y(), 
-                                    scaled_pos.z());
+                                    scaled_pos.z(),
+                                    scale);
     }
 
-    value_type operator[](const Eigen::Vector3f p) const {
+    value_type operator[](const Eigen::Vector3i& p) const {
       return _map_index->get(p.x(), p.y(), p.z());
     }
 
     template <typename FieldSelector>
-    float interp(const Eigen::Vector3f& pos, FieldSelector select) const {
-      const float inverseVoxelSize = _size / _dim;
+    std::pair<float, int> interp(const Eigen::Vector3f& pos, FieldSelector select) const {
+      const float inverseVoxelSize = _size / _extent;
       Eigen::Vector3f discrete_pos = inverseVoxelSize * pos;
       return _map_index->interp(discrete_pos, select);
     }
 
+  /*! \brief Interp voxel value at metric position  (x,y,z)
+   * \param pos three-dimensional coordinates in which each component belongs 
+   * to the interval [0, _dim]
+   * \param stride distance between neighbouring sampling point, in voxels.
+   * Must be >= 1
+   * \return signed distance function value at voxel position (x, y, z)
+   */
+    template <typename FieldSelector>
+    std::pair<float, int> interp(const Eigen::Vector3f& pos, const int h, FieldSelector select) const {
+      const float inverseVoxelSize = _size / _extent;
+      Eigen::Vector3f discrete_pos = (inverseVoxelSize * pos);
+      return _map_index->interp(discrete_pos, h, select);
+    }
+
+    /*! \brief Compute gradient at metric position  (x,y,z)
+     * \param pos three-dimensional coordinates in which each component belongs 
+     * to the interval [0, _dim]
+     * \return signed distance function value at voxel position (x, y, z)
+     */
     template <typename FieldSelector>
     Eigen::Vector3f grad(const Eigen::Vector3f& pos, FieldSelector select) const {
-
-      const float inverseVoxelSize = _size / _dim;
+const float inverseVoxelSize = _size / _extent;
       Eigen::Vector3f discrete_pos = inverseVoxelSize * pos;
-      return _map_index->grad(discrete_pos, select);
+      return _map_index->grad(discrete_pos, 1.f, select);
+    }
+
+    /*! \brief Compute gradient at metric position  (x,y,z)
+     * \param pos three-dimensional coordinates in which each component belongs 
+     * to the interval [0, _dim]
+     * \param stride distance between neighbouring sampling point, in voxels.
+     * Must be >= 1
+     * \return signed distance function value at voxel position (x, y, z)
+     */
+    template <typename FieldSelector>
+    Eigen::Vector3f grad(const Eigen::Vector3f& pos, 
+        const int h, 
+        FieldSelector select) const {
+      const float inverseVoxelSize = _size / _extent;
+      Eigen::Vector3f discrete_pos = inverseVoxelSize * pos;
+      return _map_index->grad(discrete_pos, h, select);
     }
 
     unsigned int _size;
-    float _dim;
+    float _extent;
     std::vector<se::key_t> _allocationList;
-    DiscreteMapT<FieldType> * _map_index; 
+    DiscreteMapT<FieldType> * _map_index;
 
   private:
 
-    inline Eigen::Vector3i pos(const Eigen::Vector3f & p) const {
-      static const float inverseVoxelSize = _size/_dim;
+    inline Eigen::Vector3i pos(const Eigen::Vector3f& p) const {
+      static const float inverseVoxelSize = _size/_extent;
       return (inverseVoxelSize * p).cast<int>();
     }
 };

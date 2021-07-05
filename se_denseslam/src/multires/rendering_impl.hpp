@@ -28,48 +28,56 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  * */
-
 #include <se/utils/math_utils.h>
 #include <type_traits>
+#include <se/volume_traits.hpp>
 
-inline Eigen::Vector4f raycast(const Volume<OFusion>& volume,
+inline Eigen::Vector4f raycast(const Volume<MultiresSDF>&     volume,
                                const Eigen::Vector3f& origin,
                                const Eigen::Vector3f& direction,
                                const float            tnear,
                                const float            tfar,
-                               const float,
+                               const float            mu,
                                const float            step,
-                               const float) {
+                               const float            largestep) {
 
-  auto select_occupancy = [](const auto& val){ return val.x; };
+  auto select_depth = [](const auto& val){ return val.x; };
   if (tnear < tfar) {
+    // first walk with largesteps until we found a hit
     float t = tnear;
-    float stepsize = step;
-    float f_t = volume.interp(origin + direction * t, select_occupancy).first;
+    float stepsize = largestep;
+    Eigen::Vector3f position = origin + direction * t;
+    const int scale = 0;
+    auto interp_res = volume.interp(position, scale, select_depth);
+    float f_t = interp_res.first;
     float f_tt = 0;
-    int scale = 0;
-
-    // if we are not already in it
-    if (f_t <= SURF_BOUNDARY) {
+    if (f_t > 0) { // ups, if we were already in it, then don't render anything here
       for (; t < tfar; t += stepsize) {
-        const Eigen::Vector3f pos =  origin + direction * t;
-        Volume<OFusion>::value_type data = volume.get(pos);
-        if (data.x > -100.f && data.y > 0.f) {
-          f_tt = volume.interp(origin + direction * t, select_occupancy).first;
+        auto data = volume.get(position, scale);
+        if (data.y == 0) {
+          stepsize = largestep;
+          position += stepsize*direction;
+          continue;
         }
-        if (f_tt > SURF_BOUNDARY)
+        f_tt = data.x;
+        if(f_tt <= 0.1 && f_tt >= -0.5f) {
+          interp_res = volume.interp(position, scale, select_depth);
+          f_tt = interp_res.first;
+        }
+        if (f_tt < 0)                  // got it, jump out of inner loop
           break;
+        stepsize = fmaxf(f_tt * mu, step);
+        position += stepsize*direction;
         f_t = f_tt;
       }
-      if (f_tt > SURF_BOUNDARY) {
-        // got it, calculate accurate intersection
-        t = t - stepsize * (f_tt - SURF_BOUNDARY) / (f_tt - f_t);
+      if (f_tt < 0) {           // got it, calculate accurate intersection
+        t = t + stepsize * f_tt / (f_t - f_tt);
         Eigen::Vector4f res = (origin + direction * t).homogeneous();
-        res.w() = scale;
+        res.w() = interp_res.second;
         return res;
       }
     }
   }
-  return Eigen::Vector4f::Constant(0);
+  return Eigen::Vector4f::Constant(-1.f);
 }
 

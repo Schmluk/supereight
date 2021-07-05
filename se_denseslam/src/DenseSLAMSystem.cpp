@@ -38,7 +38,10 @@
 #include <se/ray_iterator.hpp>
 #include <se/algorithms/meshing.hpp>
 #include <se/geometry/octree_collision.hpp>
-#include <se/vtk-io.h>
+#include <se/io/vtk-io.h>
+#include <se/io/ply_io.hpp>
+#include <se/algorithms/balancing.hpp>
+#include <se/functors/for_each.hpp>
 #include "timings.h"
 #include <perfstats.h>
 #include "preprocessing.cpp"
@@ -48,6 +51,9 @@
 #include "kfusion/mapping_impl.hpp"
 #include "bfusion/alloc_impl.hpp"
 #include "kfusion/alloc_impl.hpp"
+#include "multires/alloc_impl.hpp"
+#include "multires/mapping_impl.hpp"
+#include "multires/rendering_impl.hpp"
 
 
 extern PerfStats Stats;
@@ -69,6 +75,7 @@ DenseSLAMSystem::DenseSLAMSystem(const Eigen::Vector2i& inputSize,
                                  std::vector<int> & pyramid,
                                  const Configuration& config) :
   computation_size_(inputSize),
+  config_(config),
   vertex_(computation_size_.x(), computation_size_.y()),
   normal_(computation_size_.x(), computation_size_.y()),
   float_depth_(computation_size_.x(), computation_size_.y())
@@ -199,6 +206,17 @@ bool DenseSLAMSystem::raycasting(const Eigen::Vector4f& k, float mu, unsigned in
         raycast_pose_ * getInverseCameraMatrix(k), nearPlane,
         farPlane, mu, step, step*BLOCK_SIDE);
     doRaycast = true;
+
+    // std::stringstream s;
+    // s << "./out/point_cloud_" << frame;
+    // savePointCloud(vertex_.data(), vertex_.size(), s.str().c_str(), 
+    //     init_pose_);
+
+    // s.str("");
+    // s.clear();
+    // s << "./out/normal_cloud_" << frame;
+    // savePointCloud(normal_.data(), normal_.size(), s.str().c_str(), 
+    //     init_pose_);
   }
   return doRaycast;
 }
@@ -208,56 +226,98 @@ bool DenseSLAMSystem::integration(const Eigen::Vector4f& k, unsigned int integra
 
   if (((frame % integration_rate) == 0) || (frame <= 3)) {
 
-    float voxelsize =  volume_._dim/volume_._size;
-    int num_vox_per_pix = volume_._dim/((se::VoxelBlock<FieldType>::side)*voxelsize);
+    float voxelsize =  volume_._extent/volume_._size;
+    int num_vox_per_pix = volume_._extent/((se::VoxelBlock<FieldType>::side)*voxelsize);
     size_t total = num_vox_per_pix * computation_size_.x() *
       computation_size_.y();
     allocation_list_.reserve(total);
 
+    const Sophus::SE3f&    Tcw = Sophus::SE3f(pose_).inverse();
+    const Eigen::Matrix4f& K   = getCameraMatrix(k);
+    const Eigen::Vector2i  framesize(computation_size_.x(), computation_size_.y());
     unsigned int allocated = 0;
     if(std::is_same<FieldType, SDF>::value) {
      allocated  = buildAllocationList(allocation_list_.data(),
-         allocation_list_.capacity(),
-        *volume_._map_index, pose_, getCameraMatrix(k), float_depth_.data(),
-        computation_size_, volume_._size,
-      voxelsize, 2*mu);
+                                      allocation_list_.capacity(),
+                                      *volume_._map_index, pose_, 
+                                      K,
+                                      float_depth_.data(),
+                                      computation_size_, 
+                                      volume_._size,
+                                      voxelsize, 2*mu);
     } else if(std::is_same<FieldType, OFusion>::value) {
-     allocated = buildOctantList(allocation_list_.data(), allocation_list_.capacity(),
-         *volume_._map_index,
-         pose_, getCameraMatrix(k), float_depth_.data(), computation_size_, voxelsize,
-         compute_stepsize, step_to_depth, 6*mu);
+     allocated = buildOctantList(allocation_list_.data(), 
+                                 allocation_list_.capacity(),
+                                 *volume_._map_index,
+                                 pose_, 
+                                 K, 
+                                 float_depth_.data(), 
+                                 computation_size_, 
+                                 voxelsize,
+                                 compute_stepsize, 
+                                 step_to_depth, 
+                                 6*mu);
+    } else if(std::is_same<FieldType, MultiresSDF>::value) {
+     allocated  = buildAllocationList(allocation_list_.data(),
+                                      allocation_list_.capacity(),
+                                      *volume_._map_index, 
+                                      pose_, 
+                                      getCameraMatrix(k), 
+                                      float_depth_.data(),
+                                      computation_size_, 
+                                      volume_._size,
+                                      voxelsize, 
+                                      2*mu);
     }
 
     volume_._map_index->allocate(allocation_list_.data(), allocated);
 
+    std::string version;
     if(std::is_same<FieldType, SDF>::value) {
-      struct sdf_update funct(float_depth_.data(),
-          Eigen::Vector2i(computation_size_.x(), computation_size_.y()), mu, 100);
+      struct sdf_update funct(float_depth_.data(), framesize, mu, maxweight);
       se::functor::projective_map(*volume_._map_index,
-          Sophus::SE3f(pose_).inverse(),
-          getCameraMatrix(k),
-          Eigen::Vector2i(computation_size_.x(), computation_size_.y()),
+          volume_._map_index->_offset,
+          Tcw,
+          K,
+          framesize,
           funct);
+      version = "sdf";
     } else if(std::is_same<FieldType, OFusion>::value) {
 
       float timestamp = (1.f/30.f)*frame;
       struct bfusion_update funct(float_depth_.data(),
-          Eigen::Vector2i(computation_size_.x(), computation_size_.y()), 
+          framesize,
           mu, timestamp, voxelsize);
 
-      se::functor::projective_map(*volume_._map_index,
-          Sophus::SE3f(pose_).inverse(),
-          getCameraMatrix(k),
+      se::functor::projective_map(*volume_._map_index, 
+          volume_._map_index->_offset,
+          Tcw,
+          K,
           Eigen::Vector2i(computation_size_.x(), computation_size_.y()),
           funct);
+      version = "ofusion";
+    } else if(std::is_same<FieldType, MultiresSDF>::value) {
+      se::multires::integrate(*volume_._map_index, Tcw, K, voxelsize,
+          volume_._map_index->_offset, float_depth_, mu, maxweight, frame);
+      version = "multires";
     }
 
-    // if(frame % 15 == 0) {
+    // if(frame > 160 && frame < 200) {
+    //   int slice_height = int(2.1f*discrete_vol_ptr_->size()/discrete_vol_ptr_->dim());
     //   std::stringstream f;
-    //   f << "./slices/integration_" << frame << ".vtk";
-    //   save3DSlice(*volume_._map_index, Eigen::Vector3i(0, 200, 0),
-    //       Eigen::Vector3i(volume_._size, 201, volume_._size),
-    //       Eigen::Vector3i::Constant(volume_._size), f.str().c_str());
+    //   f << "./slices/integration_" << version << "_" << std::setfill('0') << std::setw(4) <<  frame << ".vtk";
+    //   save3DSlice(*volume_._map_index, 
+    //       Eigen::Vector3i(0, slice_height, 0),
+    //       Eigen::Vector3i(volume_._map_index->size(), slice_height + 1,volume_._map_index->size() ),
+    //       [](const auto& val) { return val.x; }, f.str().c_str());
+    //   f.str("");
+    //   f.clear();
+    // }
+    
+    // if(frame % 30 == 0) {
+    //   std::stringstream f;
+    //   f << "./slices/octree_" << frame << ".ply";
+    //   se::print_octree(f.str().c_str(), *volume_._map_index);
     //   f.str("");
     //   f.clear();
     // }
@@ -301,22 +361,56 @@ void DenseSLAMSystem::renderDepth(unsigned char* out,
 
 void DenseSLAMSystem::dump_mesh(const std::string filename){
 
-  std::vector<Triangle> mesh;
-  auto inside = [](const Volume<FieldType>::value_type& val) {
-    // meshing::status code;
-    // if(val.y == 0.f)
-    //   code = meshing::status::UNKNOWN;
-    // else
-    //   code = val.x < 0.f ? meshing::status::INSIDE : meshing::status::OUTSIDE;
-    // return code;
-    // std::cerr << val.x << " ";
-    return val.x < 0.f;
+  se::functor::internal::parallel_for_each(volume_._map_index->getBlockBuffer(), 
+      [](auto block) { 
+        if(std::is_same<FieldType, MultiresSDF>::value) {
+          block->current_scale(block->min_scale());
+        } else {
+          block->current_scale(0);
+        }
+      });
+
+  auto interp_down = [this](auto block) { 
+    if(block->min_scale() == 0) return;
+    const Eigen::Vector3f& offset = this->volume_._map_index->_offset;
+    const Eigen::Vector3i base = block->coordinates();
+    const int side = block->side;
+    for(int z = 0; z < side; ++z)
+      for(int y = 0; y < side; ++y)
+        for(int x = 0; x < side; ++x) {
+          const Eigen::Vector3i vox = base + Eigen::Vector3i(x, y , z);
+          auto curr = block->data(vox, 0);
+          auto res = this->volume_._map_index->interp_checked(
+              vox.cast<float>() + offset, 0, [](const auto& val) { return val.x; });
+          if(res.second >= 0) {
+            curr.x = res.first;
+            curr.y = this->volume_._map_index->interp(
+                vox.cast<float>() + offset, [](const auto& val) { return val.y; }).first;
+          } else {
+            curr.y = 0;
+          }
+          block->data(vox, 0, curr);
+        }
   };
 
-  auto select = [](const Volume<FieldType>::value_type& val) {
-    return val.x;
-  };
+  se::functor::internal::parallel_for_each(volume_._map_index->getBlockBuffer(),
+      interp_down);
+  se::functor::internal::parallel_for_each(volume_._map_index->getBlockBuffer(), 
+      [](auto block) { 
+          block->current_scale(0);
+      });
 
-  se::algorithms::marching_cube(*volume_._map_index, select, inside, mesh);
-  writeVtkMesh(filename.c_str(), mesh);
+    std::cout << "saving triangle mesh to file :" << filename  << std::endl;
+
+    std::vector<Triangle> mesh;
+    auto inside = [](const Volume<FieldType>::value_type& val) {
+      return val.x < 0.f;
+    };
+
+    auto select = [](const Volume<FieldType>::value_type& val) {
+      return val.x;
+    };
+
+    se::algorithms::marching_cube(*volume_._map_index, select, inside, mesh);
+    writeVtkMesh(filename.c_str(), mesh, this->init_pose_);
 }

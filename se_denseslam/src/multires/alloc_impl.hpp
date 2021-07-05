@@ -32,7 +32,9 @@
 #define SDF_ALLOC_H
 #include <se/utils/math_utils.h>
 #include <se/node.hpp>
+#include <se/octree.hpp>
 #include <se/utils/morton_utils.hpp>
+#include <se/volume_traits.hpp>
 
 /*
  * \brief Given a depth map and camera matrix it computes the list of
@@ -50,10 +52,10 @@
  * \param voxelSize spacing between two consegutive voxels, in metric space
  * \param band maximum extent of the allocating region, per ray
  */
-template <typename FieldType, template <typename> class OctreeT, typename HashType>
+template <typename HashType>
 unsigned int buildAllocationList(HashType*              allocationList,
                                  size_t                 reserved,
-                                 OctreeT<FieldType>&    map_index,
+                                 se::Octree<MultiresSDF>&    map_index,
                                  const Eigen::Matrix4f& pose,
                                  const Eigen::Matrix4f& K,
                                  const float*           depthmap,
@@ -63,7 +65,7 @@ unsigned int buildAllocationList(HashType*              allocationList,
                                  const float            band) {
 
   const float inverseVoxelSize = 1/voxelSize;
-  const unsigned block_scale = log2(size) - se::math::log2_const(se::VoxelBlock<FieldType>::side);
+  const unsigned block_scale = log2(size) - se::math::log2_const(se::VoxelBlock<MultiresSDF>::side);
 
   Eigen::Matrix4f invK = K.inverse();
   const Eigen::Matrix4f kPose = pose * invK;
@@ -102,7 +104,7 @@ unsigned int buildAllocationList(HashType*              allocationList,
             && (voxelScaled.y() >= 0)
             && (voxelScaled.z() >= 0)) {
           voxel = voxelScaled.cast<int>();
-          se::VoxelBlock<FieldType> * n = map_index.fetch(voxel.x(),
+          se::VoxelBlock<MultiresSDF> * n = map_index.fetch(voxel.x(),
               voxel.y(), voxel.z());
           if (!n) {
             HashType k = map_index.hash(voxel.x(), voxel.y(), voxel.z(),

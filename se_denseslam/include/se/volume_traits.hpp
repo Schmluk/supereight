@@ -80,4 +80,24 @@ struct voxel_traits<OFusion> {
 #define TOP_CLAMP     1000.f
 #define BOTTOM_CLAMP  (-TOP_CLAMP)
 
+/******************************************************************************
+ *
+ * Multires TSDF voxel traits and algorithm specificic defines
+ *
+****************************************************************************/
+
+typedef struct MultiresSDF {
+  float x;
+  float x_last;
+  int   y;
+  int   delta_y;
+} MultiresSDF;
+
+template<>
+struct voxel_traits<MultiresSDF> {
+  typedef MultiresSDF value_type;
+  static inline value_type empty(){ return {1.f, 1.f, 0, 0}; }
+  static inline value_type initValue(){ return {1.f, 1.f, 0, 0}; }
+};
+
 #endif

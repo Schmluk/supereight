@@ -54,32 +54,42 @@ public:
   key_t code_;
   unsigned int side_;
   unsigned char children_mask_;
+  unsigned int timestamp_;
 
   Node(){
     code_ = 0;
     side_ = 0;
     children_mask_ = 0;
+    timestamp_ = 0;
     for (unsigned int i = 0; i < 8; i++){
       value_[i]     = init_val();
+      parent_ptr_ = NULL;
       child_ptr_[i] = NULL;
     }
   }
 
-    virtual ~Node(){};
+  virtual ~Node(){};
 
-    Node *& child(const int x, const int y, 
-        const int z) {
-      return child_ptr_[x + y*2 + z*4];
-    };
+  Node *& child(const int x, const int y,
+      const int z) {
+    return child_ptr_[x + y*2 + z*4];
+  };
 
-    Node *& child(const int offset ){
-      return child_ptr_[offset];
-    }
+  Node *& child(const int offset ) {
+    return child_ptr_[offset];
+  }
 
-    virtual bool isLeaf(){ return false; }
+  Node *& parent() {
+    return parent_ptr_;
+  }
 
+  unsigned int timestamp() { return timestamp_; }
+  unsigned int timestamp(unsigned int t) { return timestamp_ = t; }
+
+  virtual bool isLeaf() { return false; }
 
 protected:
+    Node *parent_ptr_;
     Node *child_ptr_[8];
 private:
     friend std::ofstream& internal::serialise <> (std::ofstream& out, Node& node);
@@ -92,8 +102,10 @@ class VoxelBlock: public Node<T> {
   public:
     typedef voxel_traits<T> traits_type;
     typedef typename traits_type::value_type value_type;
+
     static constexpr unsigned int side = BLOCK_SIDE;
-    static constexpr unsigned int sideSq = side*side;
+    static constexpr unsigned int side_sq = side*side;
+    static constexpr unsigned int side_cube = side*side*side;
 
     static constexpr value_type empty() { 
       return traits_type::empty(); 
@@ -104,7 +116,9 @@ class VoxelBlock: public Node<T> {
 
     VoxelBlock(){
       coordinates_ = Eigen::Vector3i::Constant(0);
-      for (unsigned int i = 0; i < side*sideSq; i++)
+      current_scale_ = 0;
+      min_scale_ = -1;
+      for (unsigned int i = 0; i < buff_size; i++)
         voxel_block_[i] = initValue();
     }
 
@@ -116,11 +130,20 @@ class VoxelBlock: public Node<T> {
     value_type data(const Eigen::Vector3i& pos) const;
     void data(const Eigen::Vector3i& pos, const value_type& value);
 
+    value_type data(const Eigen::Vector3i& pos, const int level) const; 
+    void data(const Eigen::Vector3i& pos, const int level, const value_type& value);
+
     value_type data(const int i) const;
     void data(const int i, const value_type& value);
 
     void active(const bool a){ active_ = a; }
     bool active() const { return active_; }
+
+    int current_scale() { return current_scale_; }
+    void current_scale(const int s) { current_scale_ = s; }
+
+    int min_scale() { return min_scale_; }
+    void min_scale(const int s) { min_scale_ = s; }
 
     value_type * getBlockRawPtr(){ return voxel_block_; }
     static constexpr int size(){ return sizeof(VoxelBlock<T>); }
@@ -128,8 +151,21 @@ class VoxelBlock: public Node<T> {
   private:
     VoxelBlock(const VoxelBlock&) = delete;
     Eigen::Vector3i coordinates_;
-    value_type voxel_block_[side*sideSq]; // Brick of data.
     bool active_;
+    int current_scale_;
+    int min_scale_;
+
+    static constexpr size_t compute_buff_size() {
+      size_t size = 0;
+      unsigned int s = side;
+      while(s >= 1) {
+        size += s * s * s;
+        s = s >> 1;
+      }
+      return size;
+    }
+    static constexpr size_t buff_size = compute_buff_size();
+    value_type voxel_block_[buff_size]; // Brick of data.
 
     friend std::ofstream& internal::serialise <> (std::ofstream& out, 
         VoxelBlock& node);
@@ -141,15 +177,54 @@ inline typename VoxelBlock<T>::value_type
 VoxelBlock<T>::data(const Eigen::Vector3i& pos) const {
   Eigen::Vector3i offset = pos - coordinates_;
   const value_type& data = voxel_block_[offset(0) + offset(1)*side +
-                                         offset(2)*sideSq];
+                                         offset(2)*side_sq];
   return data;
+}
+
+template <typename T>
+inline typename VoxelBlock<T>::value_type 
+VoxelBlock<T>::data(const Eigen::Vector3i& pos, const int level) const {
+  Eigen::Vector3i relative_pos = pos - coordinates_;
+  int offset = 0;
+  int l = 0;
+  int num_voxels = side_cube;
+  while(l < level) {
+    offset += num_voxels; 
+    num_voxels /= 8;
+    ++l;
+  } 
+  const int local_size = side / (1 << level); 
+  relative_pos = relative_pos / (1 << level);
+  return voxel_block_[offset + relative_pos.x() + 
+                               relative_pos.y()*local_size +
+                               relative_pos.z()*se::math::sq(local_size)];
 }
 
 template <typename T>
 inline void VoxelBlock<T>::data(const Eigen::Vector3i& pos, 
                                 const value_type &value){
   Eigen::Vector3i offset = pos - coordinates_;
-  voxel_block_[offset(0) + offset(1)*side + offset(2)*sideSq] = value;
+  voxel_block_[offset(0) + offset(1)*side + offset(2)*side_sq] = value;
+}
+
+template <typename T>
+inline void VoxelBlock<T>::data(const Eigen::Vector3i& pos, const int level, 
+                                const value_type &value){
+  Eigen::Vector3i relative_pos = pos - coordinates_;
+  int offset = 0;
+  int l = 0;
+  int num_voxels = side_cube;
+  while(l < level) {
+    offset += num_voxels; 
+    num_voxels /= 8;
+    ++l;
+  } 
+
+  const int local_size = side / (1 << level); 
+  relative_pos = relative_pos / (1 << level);
+  voxel_block_[offset + relative_pos.x() + 
+                        relative_pos.y()*local_size +
+                        relative_pos.z()*se::math::sq(local_size)] = value;
 }
 
 template <typename T>

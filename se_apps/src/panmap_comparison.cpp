@@ -29,31 +29,23 @@ PerfStats Stats;
 // taken for everything.
 struct Params {
   // Paths.
-  const std::string data_path =
-      "/home/lukas/Documents/Datasets/flat_dataset/run1/"; // With trailing
-                                                           // slash.
-  const std::string output_path =
-      "/home/lukas/Documents/PanopticMapping/supereight/"; // With trailing
-                                                           // slash.
+  const std::string data_path = "./data/"; // With trailing slash.
+  const std::string output_path = "./";    // With trailing slash.
   const std::string input_file =
-      "/home/lukas/Documents/PanopticMapping/supereight/inputs/"
-      "flat_run1.raw"; // Output of the processed flat sequence.
-  const std::string ground_truth_pointcloud_file =
-      "/home/lukas/Documents/Datasets/flat_dataset/ground_truth/run1/"
-      "flat_1_gt_10000_visible.ply";
+      "./data/flat_run1.raw"; // Output of the processed flat sequence.
+  const std::string ground_truth_pointcloud_file = "./data/flat_1_gt_10000.ply";
 
-  // Environment params.
+  // Supereight system params.
+  //@emanuelev Params used for the system. 
   const int res = 512;
   const Eigen::Vector3i volume_resolution = {res, res, res};
   const Eigen::Vector3f volume_size = {20, 20, 20};
   const Eigen::Vector3f initial_position = {10, 10, 10};
   const Eigen::Vector4f camera_K = {320, 320, 320, 240};
-
-  // Supereight system params.
   const float truncation_distance = .3;
 
   // Evaluation params.
-  const bool recompute_map = false;
+  const bool recompute_map = true;
   const bool visualize = true;
   const bool use_tracking = false;
   const float maximum_error_distance = 0.1; // m
@@ -258,9 +250,9 @@ int main(int argc, char **argv) {
     return -1;
   }
 
+  // @emanuelev This is the lookup structure used to get the SDF distances and weights for evaluation.
   auto volume = VolumeTemplate<FieldType, se::Octree>(
       params.volume_resolution.x(), params.volume_size.x(), map_ptr.get());
-
   auto select_sdf =
       [](const typename se::Octree<FieldType>::value_type &value) {
         return value.x;
@@ -269,76 +261,67 @@ int main(int argc, char **argv) {
       [](const typename se::Octree<FieldType>::value_type &value) {
         return value.y;
       };
-  const float inverseVoxelSize =
-      params.volume_resolution.x() / params.volume_size.x();
 
   std::ofstream output_file((params.output_path + "evaluation.csv").c_str());
   output_file << "MeanError [m],StdError [m],RMSE [m],TotalPoints [1],"
               << "UnknownPoints [1],TruncatedPoints [1]\n";
 
-  for (int scale = 0; scale < max_scale; ++scale) {
-    std::cout << "Scale: " << scale << std::endl;
-    uint64_t total_points = 0;
-    uint64_t unknown_points = 0;
-    uint64_t truncated_points = 0;
-    std::vector<float> abserror;
+  uint64_t total_points = 0;
+  uint64_t unknown_points = 0;
+  uint64_t truncated_points = 0;
+  std::vector<float> abserror;
 
-    for (const auto &point : *gt_ptcloud_) {
-      Eigen::Vector3f position =
-          Eigen::Vector3f(point.x, point.y, point.z) + params.initial_position;
+  for (const auto &point : *gt_ptcloud_) {
+    // @emanuelev This should compute the signed distance function value at the most accurate resolution possible for each point. Also (at the same resolution) the TSDF observation weight (y?) should be used to check whether a point was observed (weight > 0).
+    Eigen::Vector3f position =
+        Eigen::Vector3f(point.x, point.y, point.z) + params.initial_position;
 
-      Eigen::Vector3f discrete_pos = (inverseVoxelSize * position);
-      // float distance = map_ptr->interp(discrete_pos, i, select_sdf).first *
-      //                  params.truncation_distance;
-      // float weight = map_ptr->interp(discrete_pos, select_weight).first *
-      //                params.truncation_distance;
+    float distance = volume.interp(position, select_sdf).first;
+    float weight = volume.interp(position, select_weight).first;
 
-      float distance = volume.interp(position, scale, select_sdf).first;
-      float weight = volume.interp(position, scale, select_weight).first;
-
-      if (weight > 1e-6) {
-        if (std::abs(distance) > params.maximum_error_distance) {
-          truncated_points++;
-          if (!params.count_truncated_points) {
-            continue;
-          }
-          distance = params.maximum_error_distance;
+    if (weight > 1e-6) {
+      // If the point is observed the SDF for each surface point should be 0.
+      if (std::abs(distance) > params.maximum_error_distance) {
+        truncated_points++;
+        if (!params.count_truncated_points) {
+          continue;
         }
-        abserror.push_back(std::abs(distance));
-      } else {
-        unknown_points++;
+        distance = params.maximum_error_distance;
       }
+      abserror.push_back(std::abs(distance));
+    } else {
+      unknown_points++;
     }
-    // Report summary.
-    float mean = 0.0;
-    float rmse = 0.0;
-    for (auto value : abserror) {
-      mean += value;
-      rmse += std::pow(value, 2);
-    }
-    if (!abserror.empty()) {
-      mean /= static_cast<float>(abserror.size());
-      rmse = std::sqrt(rmse / static_cast<float>(abserror.size()));
-    }
-    float stddev = 0.0;
-    for (auto value : abserror) {
-      stddev += std::pow(value - mean, 2.0);
-    }
-    if (abserror.size() > 2) {
-      stddev = sqrt(stddev / static_cast<float>(abserror.size() - 1));
-    }
-    output_file << mean << "," << stddev << "," << rmse << ","
-                << gt_ptcloud_->size() << "," << unknown_points << ","
-                << truncated_points << "\n";
   }
+  // Report summary.
+  float mean = 0.0;
+  float rmse = 0.0;
+  for (auto value : abserror) {
+    mean += value;
+    rmse += std::pow(value, 2);
+  }
+  if (!abserror.empty()) {
+    mean /= static_cast<float>(abserror.size());
+    rmse = std::sqrt(rmse / static_cast<float>(abserror.size()));
+  }
+  float stddev = 0.0;
+  for (auto value : abserror) {
+    stddev += std::pow(value - mean, 2.0);
+  }
+  if (abserror.size() > 2) {
+    stddev = sqrt(stddev / static_cast<float>(abserror.size() - 1));
+  }
+  output_file << mean << "," << stddev << "," << rmse << ","
+              << gt_ptcloud_->size() << "," << unknown_points << ","
+              << truncated_points << "\n";
 
-  std::cout << "Done." << std::endl;
+std::cout << "Done." << std::endl;
 
-  //  =========  FREE BASIC BUFFERS  =========
+//  =========  FREE BASIC BUFFERS  =========
 
-  free(inputDepth);
-  free(depthRender);
-  free(trackRender);
-  free(volumeRender);
-  return 0;
+free(inputDepth);
+free(depthRender);
+free(trackRender);
+free(volumeRender);
+return 0;
 }

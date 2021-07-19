@@ -43,4 +43,7 @@ living_room_traj2_loop/
 benchmark.log
 data/
 mesh.vtk
+evaluation.csv
+log.csv
+map.bin
 

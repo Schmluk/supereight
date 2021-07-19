@@ -91,13 +91,16 @@ typedef struct MultiresSDF {
   float x_last;
   int   y;
   int   delta_y;
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
 } MultiresSDF;
 
 template<>
 struct voxel_traits<MultiresSDF> {
   typedef MultiresSDF value_type;
-  static inline value_type empty(){ return {1.f, 1.f, 0, 0}; }
-  static inline value_type initValue(){ return {1.f, 1.f, 0, 0}; }
+  static inline value_type empty(){ return {1.f, 1.f, 0, 0, 0, 0, 0}; }
+  static inline value_type initValue(){ return {1.f, 1.f, 0, 0, 0, 0, 0}; }
 };
 
 #endif

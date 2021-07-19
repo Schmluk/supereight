@@ -162,7 +162,7 @@ int main(int argc, char ** argv) {
 		std::cout << __LINE__ << std::endl;
 	}
 	// ==========     DUMP VOLUME      =========
-
+	
 	if (config.dump_volume_file != "") {
     auto start = std::chrono::steady_clock::now();
 		pipeline->dump_mesh(config.dump_volume_file.c_str());
@@ -267,6 +267,9 @@ int processAll(DepthReader *reader, bool processFrame, bool renderImages,
 		Eigen::Vector3f tmp = pipeline->getPosition();
 		pos = make_float3(tmp.x(), tmp.y(), tmp.z());
 		pose = pipeline->getPose();
+		if (frame % 20 == 0) {
+			std::cout << "Transform at " << frame << ": \n" << pose << std::endl;
+		}
 
 		timings[3] = std::chrono::steady_clock::now();
 

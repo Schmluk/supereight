@@ -67,8 +67,8 @@ DepthReader *createReader(Configuration *config, std::string filename) {
               else
                 config->volume_resolution.x() = ::atoi(
                     dims[0].c_str());
-              config->volume_resolution.y() = config->volume_size.x();
-              config->volume_resolution.z() = config->volume_size.x();
+              config->volume_resolution.y() = config->volume_resolution.x();
+              config->volume_resolution.z() = config->volume_resolution.x();
             }
             std::cout << "volumetric-size: "
               << config->volume_resolution.x() << "x"

@@ -359,9 +359,8 @@ void DenseSLAMSystem::renderDepth(unsigned char* out,
         renderDepthKernel(out, float_depth_.data(), outputSize, nearPlane, farPlane);
 }
 
-void DenseSLAMSystem::dump_mesh(const std::string filename){
-
-  se::functor::internal::parallel_for_each(volume_._map_index->getBlockBuffer(), 
+    std::vector<Triangle> DenseSLAMSystem::get_mesh() {
+se::functor::internal::parallel_for_each(volume_._map_index->getBlockBuffer(), 
       [](auto block) { 
         if(std::is_same<FieldType, MultiresSDF>::value) {
           block->current_scale(block->min_scale());
@@ -400,8 +399,6 @@ void DenseSLAMSystem::dump_mesh(const std::string filename){
           block->current_scale(0);
       });
 
-    std::cout << "saving triangle mesh to file :" << filename  << std::endl;
-
     std::vector<Triangle> mesh;
     auto inside = [](const Volume<FieldType>::value_type& val) {
       return val.x < 0.f;
@@ -412,5 +409,15 @@ void DenseSLAMSystem::dump_mesh(const std::string filename){
     };
 
     se::algorithms::marching_cube(*volume_._map_index, select, inside, mesh);
+    return mesh;
+    }
+
+void DenseSLAMSystem::dump_mesh(const std::string filename,  const std::vector<Triangle>& mesh){
+      std::cout << "saving triangle mesh to file :" << filename  << std::endl;
     writeVtkMesh(filename.c_str(), mesh, this->init_pose_);
 }
+
+    void DenseSLAMSystem::dump_mesh(const std::string filename) {
+      dump_mesh(filename, get_mesh());
+    }
+

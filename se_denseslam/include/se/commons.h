@@ -168,6 +168,7 @@ typedef struct Triangle {
   Eigen::Vector3f vnormals[3];
   Eigen::Vector3f normal;
   float color;
+  Eigen::Vector3i color2;
   float surface_area;
   
   Triangle(){ 
@@ -331,6 +332,7 @@ inline void writeVtkMesh(const char * filename,
   std::stringstream polygons;
   std::stringstream pointdata;
   std::stringstream celldata;
+  std::stringstream colordata;
   int point_count = 0;
   int triangle_count = 0;
   bool hasPointData = point_data != NULL;
@@ -353,6 +355,8 @@ inline void writeVtkMesh(const char * filename,
 
     polygons << "3 " << point_count << " " << point_count+1 << 
       " " << point_count+2 << std::endl;
+
+    colordata << t.color2.x() << " " << t.color2.y() << " " << t.color2.z() << std::endl;
 
     if(hasPointData){
       pointdata << point_data[i*3] << std::endl;
@@ -380,6 +384,10 @@ inline void writeVtkMesh(const char * filename,
 
   f << "POLYGONS " << triangle_count << " " << triangle_count * 4 << std::endl;
   f << polygons.str() << std::endl;
+
+    f << "COLOR " << point_count << " UINT" << std::endl;
+  f << colordata.str();
+
   if(hasPointData){
     f << "POINT_DATA " << point_count << std::endl; 
     f << "SCALARS vertex_scalars float 1" << std::endl;

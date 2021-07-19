@@ -219,7 +219,10 @@ class DenseSLAMSystem {
     /*
      * TODO Document this.
      */
+    void dump_mesh(const std::string filename, const std::vector<Triangle>& mesh);
     void dump_mesh(const std::string filename);
+    std::vector<Triangle> get_mesh();
+
 
     /**
      * Render the current 3D reconstruction.

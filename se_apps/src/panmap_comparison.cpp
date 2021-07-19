@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <string>
 #include <time.h>
+#include <unordered_map>
 #include <vector>
 
 #include <getopt.h>
@@ -27,38 +28,61 @@ PerfStats Stats;
 
 // Params to just run this for evaluation purposes. The default values will be
 // taken for everything.
+std::unordered_map<int, int> vs_to_res{
+    {1, 2048}, {2, 1024}, {5, 512}, {10, 256}};
+std::unordered_map<int, float> vs_to_ext{
+    {1, 20.48}, {2, 20.48}, {5, 25.6}, {10, 25.6}};
+
 struct Params {
+  explicit Params(int _vs) : vs(_vs) {}
   // Paths.
   const std::string data_path = "./data/"; // With trailing slash.
-  const std::string output_path = "./";    // With trailing slash.
+  const std::string output_path =
+      "/home/lukas/Documents/PanopticMapping/supereight/"; // With trailing
+                                                           // slash.
   const std::string input_file =
       "./data/flat_run1.raw"; // Output of the processed flat sequence.
   const std::string ground_truth_pointcloud_file = "./data/flat_1_gt_10000.ply";
 
   // Supereight system params.
-  //@emanuelev Params used for the system. 
-  const int res = 512;
-  const Eigen::Vector3i volume_resolution = {res, res, res};
-  const Eigen::Vector3f volume_size = {20, 20, 20};
+  //@emanuelev Params used for the system.
+  const int vs; // cm, 1,2,5,10
+  const Eigen::Vector3i volume_resolution = {vs_to_res[vs], vs_to_res[vs],
+                                             vs_to_res[vs]};
+
+  const Eigen::Vector3f volume_size = {vs_to_ext[vs], vs_to_ext[vs],
+                                       vs_to_ext[vs]};
   const Eigen::Vector3f initial_position = {10, 10, 10};
   const Eigen::Vector4f camera_K = {320, 320, 320, 240};
-  const float truncation_distance = .3;
+  const float truncation_distance = 0.02 * vs;
 
   // Evaluation params.
   const bool recompute_map = true;
-  const bool visualize = true;
+  const bool visualize = false;
   const bool use_tracking = false;
-  const float maximum_error_distance = 0.1; // m
-  const bool count_truncated_points = false;
 };
 
 /***
  * This program loop over a scene recording.
  */
 int main(int argc, char **argv) {
+  std::vector<std::string> args(argv + 1, argv + argc);
+  if (argc != 2) {
+    std::cout << "Argument 'voxel size' missing." << std::endl;
+    return -1;
+  }
+  const int vs = std::stoi(args[0]);
+  if (vs_to_res.find(vs) == vs_to_res.end()) {
+    std::cout << "Unknown voxel size '" << vs << "'." << std::endl;
+    return -1;
+  }
 
   Configuration config = parseArgs(argc, argv);
-  Params params;
+  Params params(vs);
+  std::cout << "VS: " << params.vs << ", Extent: " << params.volume_size.x()
+            << ", Resolution: " << params.volume_resolution.x()
+            << ", Truncation distance: " << params.truncation_distance
+            << std::endl;
 
   // ========= CHECK ARGS =====================
 
@@ -78,6 +102,7 @@ int main(int argc, char **argv) {
   config.camera = params.camera_K;
   config.volume_resolution = params.volume_resolution;
   config.volume_size = params.volume_size;
+  config.mu = params.truncation_distance;
 
   // ========= READER INITIALIZATION  =========
 
@@ -250,7 +275,8 @@ int main(int argc, char **argv) {
     return -1;
   }
 
-  // @emanuelev This is the lookup structure used to get the SDF distances and weights for evaluation.
+  // @emanuelev This is the lookup structure used to get the SDF distances and
+  // weights for evaluation.
   auto volume = VolumeTemplate<FieldType, se::Octree>(
       params.volume_resolution.x(), params.volume_size.x(), map_ptr.get());
   auto select_sdf =
@@ -272,7 +298,10 @@ int main(int argc, char **argv) {
   std::vector<float> abserror;
 
   for (const auto &point : *gt_ptcloud_) {
-    // @emanuelev This should compute the signed distance function value at the most accurate resolution possible for each point. Also (at the same resolution) the TSDF observation weight (y?) should be used to check whether a point was observed (weight > 0).
+    // @emanuelev This should compute the signed distance function value at the
+    // most accurate resolution possible for each point. Also (at the same
+    // resolution) the TSDF observation weight (y?) should be used to check
+    // whether a point was observed (weight > 0).
     Eigen::Vector3f position =
         Eigen::Vector3f(point.x, point.y, point.z) + params.initial_position;
 
@@ -281,13 +310,6 @@ int main(int argc, char **argv) {
 
     if (weight > 1e-6) {
       // If the point is observed the SDF for each surface point should be 0.
-      if (std::abs(distance) > params.maximum_error_distance) {
-        truncated_points++;
-        if (!params.count_truncated_points) {
-          continue;
-        }
-        distance = params.maximum_error_distance;
-      }
       abserror.push_back(std::abs(distance));
     } else {
       unknown_points++;
@@ -315,13 +337,13 @@ int main(int argc, char **argv) {
               << gt_ptcloud_->size() << "," << unknown_points << ","
               << truncated_points << "\n";
 
-std::cout << "Done." << std::endl;
+  std::cout << "Done." << std::endl;
 
-//  =========  FREE BASIC BUFFERS  =========
+  //  =========  FREE BASIC BUFFERS  =========
 
-free(inputDepth);
-free(depthRender);
-free(trackRender);
-free(volumeRender);
-return 0;
+  free(inputDepth);
+  free(depthRender);
+  free(trackRender);
+  free(volumeRender);
+  return 0;
 }
